@@ -1,0 +1,54 @@
+services:
+  rabbitmq:
+    image: rabbitmq:4.3-management
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBIT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBIT_PASSWORD}
+    ports:
+      - "5671:5671"
+    volumes:
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./certs:/certs:ro
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./init_schema.sql:/docker-entrypoint-initdb.d/init_schema.sql
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  consumer-socket:
+    build: .
+    command: ["--transport", "socket"]
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    volumes: &consumer_volumes
+      - ./config.ini:/app/config.ini:ro
+      - ./certs:/certs:ro
+    depends_on:
+      db: {condition: service_healthy}
+
+  consumer-queue:
+    build: .
+    command: ["--transport", "queue"]
+    restart: unless-stopped
+    volumes: *consumer_volumes
+    depends_on:
+      db: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+
+volumes:
+  postgres_data:
